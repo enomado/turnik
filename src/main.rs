@@ -47,8 +47,10 @@ use crate::{
     db_async::{DbRequest, SqlThread, ThreadsFromStart},
     sql::{sql_thread_runner, DbState},
     state::DvachThreadUrl,
-    web::{thread_planner, web_backend, FromUi, ThreadPlanner},
+    web::{thread_planner_thread, web_backend, FromUi, ThreadPlanner, ThreadPlannerBuilder},
 };
+
+use toml;
 
 mod db_async;
 mod media_downloader;
@@ -62,15 +64,36 @@ pub struct Config {
     pub database_path: PathBuf,
 }
 
-fn get_config() -> Config {
-    let current_dir = current_dir().unwrap();
+#[derive(Deserialize)]
+struct TomlConfig {
+    download_path: String,
+}
 
-    // into_os_string().into_string()
+impl TomlConfig {
+    pub fn parse(path: &PathBuf) -> Result<Self> {
+        use std::fs::read_to_string;
+
+        let file_contents = read_to_string(&path)?;
+
+        let config: TomlConfig = toml::from_str(file_contents.as_str())?;
+
+        Ok(config)
+    }
+}
+
+fn get_config() -> Result<Config> {
+    let current_dir = current_dir().unwrap();
     println!("current dir is {}", current_dir.to_str().unwrap());
 
-    let dl_folder = PathBuf::from("/mnt/1/from_newest_ssd_2020/other/rust/turnik3/content");
+    let config_path = current_dir.join("turnik.toml");
 
-    let _ = dl_folder.exists() || panic!("folder not exists");
+    println!("config path: {}", &config_path.to_str().unwrap());
+
+    let toml_config = TomlConfig::parse(&config_path)?;
+
+    let dl_folder = PathBuf::from(toml_config.download_path);
+
+    let _ = dl_folder.exists() || panic!("folder does not exists");
 
     // download_folder.metadata()
 
@@ -81,7 +104,7 @@ fn get_config() -> Config {
 
     let db_path = current_dir.join("db");
 
-    Config { download_path: dl_folder, database_path: db_path }
+    Ok(Config { download_path: dl_folder, database_path: db_path })
 }
 
 fn spawn_sql_thread(config: &Config, shotdown: ShutdownCall) -> SqlThread {
@@ -140,7 +163,7 @@ impl ShutdownCall {
 
         let to_ret = match res {
             Err(TryRecvError::Closed) => {
-                println!("channel closed, shouting down");
+                println!("channel closed, shuting down");
                 true
             }
             Err(TryRecvError::Empty) => false,
@@ -166,7 +189,7 @@ impl ShutdownCall {
 
 #[tokio::main]
 async fn main() {
-    let config = get_config();
+    let config = get_config().unwrap();
 
     let state = ThreadState::new(&config.download_path);
     let state = Rc::new(RefCell::new(state));
@@ -184,9 +207,9 @@ async fn main() {
 
     let media_thread = Arc::new(media_thread_raw);
 
-    let mut thread_planner =
-        ThreadPlanner::init(state.clone(), sql_thread.clone(), media_thread.clone());
-    thread_planner.spawn(&local_task_set, shoutdown.clone());
+    let thread_planner_builder =
+        ThreadPlannerBuilder::init(state.clone(), sql_thread.clone(), media_thread.clone());
+    let thread_planner = thread_planner_builder.spawn(&local_task_set, shoutdown.clone());
 
     let shoutdown = shoutdown.clone();
     local_task_set

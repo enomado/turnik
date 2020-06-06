@@ -15,7 +15,7 @@ use std::{
 
 use anyhow::{bail, Context, Result};
 use bincode;
-use chrono::{DateTime, Duration, offset::LocalResult, prelude::*, Utc};
+use chrono::{offset::LocalResult, prelude::*, DateTime, Duration, Utc};
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 // todo test appdb
@@ -35,11 +35,21 @@ async fn valid_arch_url() {
 }
 
 #[tokio::test]
-async fn match_string() {
-    if "res" == "res" {
-        panic!("no");
-    }
+async fn valid_origin() {
+    let url =
+        Url::parse(&"https://2ch.hk/b/arch/2020-06-01/res/221558211.html#221558211".to_owned())
+            .unwrap();
+
+    let origin = url.scheme();
+
+    // let     scheme = match origin{
+    // }
+
+    dbg!();
 }
+
+#[tokio::test]
+async fn test_something() {}
 
 #[derive(Serialize, Deserialize, Debug, Clone, Default)]
 pub struct DvachThreadUrl {
@@ -217,11 +227,9 @@ impl ThreadState {
 fn filter_url(url: &Url) -> Option<String> {
     let host = url.host_str();
 
-    {
-        let path = url.to_string();
-        if path.starts_with("mailto:") {
-            return None;
-        }
+    if !["https"].contains(&url.scheme()) {
+        println!("not https {}", url.to_owned());
+        return None;
     }
 
     if host.is_none() {

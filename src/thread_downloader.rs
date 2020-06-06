@@ -470,7 +470,7 @@ pub async fn thread_downloader(
         println!("thread {} tick", &thread_url_raw.to_url_string());
 
         // https://docs.rs/tokio/0.2.21/tokio/time/fn.timeout.html
-        delay_for(Duration::new(30, 0)).await;
+        delay_for(Duration::new(50, 0)).await;
     }
 
     sql.finish_thread(&thread_url_raw).await.unwrap();

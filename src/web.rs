@@ -116,21 +116,12 @@ struct ThreadPlannerTransferState {
     media_thread: Arc<MediaThread>,
 }
 
-pub struct ThreadPlanner {
+pub struct ThreadPlannerBuilder {
+    int_state: ThreadPlannerTransferState,
     tx: Sender<FromUi>,
-    int_state: Option<ThreadPlannerTransferState>,
 }
 
-unsafe impl Send for ThreadPlanner {}
-unsafe impl Sync for ThreadPlanner {}
-
-impl Clone for ThreadPlanner {
-    fn clone(&self) -> Self {
-        ThreadPlanner { tx: self.tx.clone(), int_state: None }
-    }
-}
-
-impl ThreadPlanner {
+impl ThreadPlannerBuilder {
     pub fn init(
         state: Rc<RefCell<ThreadState>>,
         sql_thread: SqlThread,
@@ -140,30 +131,51 @@ impl ThreadPlanner {
 
         Self {
             tx: thread_planner_tx,
-            int_state: Some(ThreadPlannerTransferState {
+            int_state: ThreadPlannerTransferState {
                 rx: thread_planner_rx,
                 sql_thread,
                 state,
                 media_thread,
-            }),
+            },
         }
     }
 
-    pub fn spawn(&mut self, local_task_set: &LocalSet, shoutdown: ShutdownCall) {
-        let state = self.int_state.take().unwrap();
+    pub fn spawn(self, local_task_set: &LocalSet, shoutdown: ShutdownCall) -> ThreadPlanner {
+        let state = self.int_state;
 
         local_task_set.spawn_local(async move {
-            thread_planner(state.state, state.rx, state.sql_thread, state.media_thread, shoutdown)
-                .await;
+            thread_planner_thread(
+                state.state,
+                state.rx,
+                state.sql_thread,
+                state.media_thread,
+                shoutdown,
+            )
+            .await;
         });
-    }
 
-    pub async fn add_thread(&mut self, url: &Url) {
-        self.tx.send(FromUi::AddThread(url.clone())).await.unwrap();
+        ThreadPlanner { tx: self.tx }
     }
 }
 
-pub async fn thread_planner(
+pub struct ThreadPlanner {
+    tx: Sender<FromUi>,
+}
+
+impl Clone for ThreadPlanner {
+    fn clone(&self) -> Self {
+        ThreadPlanner { tx: self.tx.clone() }
+    }
+}
+
+impl ThreadPlanner {
+    pub async fn add_thread(&mut self, url: &Url) -> Result<()> {
+        self.tx.send(FromUi::AddThread(url.clone())).await?;
+        Ok(())
+    }
+}
+
+pub async fn thread_planner_thread(
     state: Rc<RefCell<ThreadState>>,
     receiver: Receiver<FromUi>,
     sql: SqlThread,
@@ -198,14 +210,11 @@ pub async fn thread_planner(
 
                 if media.threads.contains(&d_url) {
                     println!("Already {}", &url);
-                    break;
+                } else {
+                    println!("adding new thread {}", &d_url);
+                    sql.new_thread(&d_url).await.unwrap();
+                    spawn_thread_loader(&state, &d_url, &sql, &media_thread).await;
                 }
-
-                println!("adding new thread {}", &d_url);
-
-                sql.new_thread(&d_url).await.unwrap();
-
-                spawn_thread_loader(&state, &d_url, &sql, &media_thread).await;
             }
         }
 
@@ -216,27 +225,33 @@ pub async fn thread_planner(
 }
 
 async fn web_request(
-    tx: ThreadPlanner,
+    thread_planner: ThreadPlanner,
     sql: SqlThread,
     shoutdown: ShutdownCall,
     val: Value,
 ) -> Result<impl warp::Reply, Infallible> {
     let yoba = val.to_string();
 
-    let mut thread_planner = tx;
+    let mut thread_planner = thread_planner;
     let _tx_db = sql;
 
     let command = FromWeb::parse_command(val);
 
     let resp = match command {
         FromWeb::AddThread(raw) => {
-            let mut url = Url::parse(&raw.url).unwrap();
-            url.set_fragment(None);
-            thread_planner.add_thread(&url).await;
+            let url = Url::parse(&raw.url);
+            match url {
+                Ok(url) => {
+                    let mut url = url;
+                    url.set_fragment(None);
+                    thread_planner.add_thread(&url).await.unwrap();
 
-            let _d_url = DvachThreadUrl::parse(&url).unwrap();
+                    let _d_url = DvachThreadUrl::parse(&url).unwrap();
 
-            Response::builder().body(format!("added"))
+                    Response::builder().body(format!("added"))
+                }
+                Err(err) => Response::builder().body(format!("not valid url: {}", err)),
+            }
         }
         FromWeb::Ping => Response::builder().body(format!("pong")),
 
