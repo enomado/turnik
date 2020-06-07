@@ -204,8 +204,8 @@ async fn main() {
 
     let local_task_set = task::LocalSet::new();
 
-    let mut media_thread_raw = MediaThread::init(&state);
-    media_thread_raw.spawn(&local_task_set, shoutdown.clone());
+    let mut media_thread_raw = MediaThread::init();
+    media_thread_raw.spawn(&local_task_set, shoutdown.clone(), state.clone());
 
     let media_thread = Arc::new(media_thread_raw);
 

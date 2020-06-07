@@ -80,8 +80,8 @@ impl ThreadPlannerBuilder {
         let state = self.int_state;
 
         local_task_set.spawn_local(async move {
-            ThreadPlannerInt::new(state.sql_thread)
-                .start(state.state, state.rx, state.media_thread, shoutdown)
+            ThreadPlannerInt::new(state.sql_thread, state.rx)
+                .start(state.state, state.media_thread, shoutdown)
                 .await;
         });
 

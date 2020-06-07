@@ -136,9 +136,8 @@ async fn select_test() {
 // use crate::media_downloader::MediaThread;
 
 pub struct MediaThread {
-    state: Rc<RefCell<ThreadState>>,
+    // state: Rc<RefCell<ThreadState>>,
     sender: RefCell<Sender<Arc<MediaEntry>>>,
-
     receiver: Option<RefCell<Receiver<Arc<MediaEntry>>>>,
 }
 
@@ -147,27 +146,23 @@ type MediaThreadPanic = ShutdownCall;
 impl MediaThread {
     // todo use Notify
 
-    pub fn init(sstate: &Rc<RefCell<ThreadState>>) -> MediaThread {
+    pub fn init() -> MediaThread {
         let (sender, receiver) = tokio_channel::<Arc<MediaEntry>>(1);
 
-        MediaThread {
-            state: sstate.clone(),
-            receiver: Some(RefCell::new(receiver)),
-            sender: RefCell::new(sender),
-        }
+        MediaThread { receiver: Some(RefCell::new(receiver)), sender: RefCell::new(sender) }
     }
 
     pub fn spawn(
         &mut self,
         local: &task::LocalSet,
         shotdown_seceiver: MediaThreadPanic,
+        state: Rc<RefCell<ThreadState>>,
     ) -> &MediaThread {
-        let state = self.state.clone();
-
         let receiver = self.receiver.take().unwrap();
 
-        local
-            .spawn_local(async { MediaThreadInt::start(state, receiver, shotdown_seceiver).await });
+        let mut media_thread = MediaThreadInt::new(state, receiver);
+
+        local.spawn_local(async move { media_thread.start(shotdown_seceiver).await });
         self
     }
 
@@ -200,10 +195,14 @@ impl MediaThread {
     }
 }
 
-struct MediaThreadInt {}
+struct MediaThreadInt {
+    state: Rc<RefCell<ThreadState>>,
+    rx: RefCell<Receiver<Arc<MediaEntry>>>,
+}
 
 impl MediaThreadInt {
-    fn get_next_media(state: &RefCell<ThreadState>) -> Option<Arc<MediaEntry>> {
+    fn get_next_media(&self) -> Option<Arc<MediaEntry>> {
+        let state = &self.state;
         let media = {
             let state = state.borrow();
             let med = state.medias.iter().find(|x| x.is_ready_for_download());
@@ -212,15 +211,14 @@ impl MediaThreadInt {
         media
     }
 
-    async fn wait_notify_or_shoutwown(
-        receiver: &mut Receiver<Arc<MediaEntry>>,
-        shotdown: &mut MediaThreadPanic,
-    ) -> bool {
+    async fn wait_notify_or_shoutwown(&mut self, shotdown: &mut MediaThreadPanic) -> bool {
         // delay_for(Duration::new(10, 0)).await;
         // let mut shotdown = shotdown.borrow_mut();
 
+        let mut rx = self.rx.borrow_mut();
+
         let res = tokio::select! {
-            _y = receiver.recv() => {
+            _y = rx.recv() => {
                 println!("operation timed out");
                 false
             }
@@ -232,18 +230,21 @@ impl MediaThreadInt {
         res
     }
 
-    pub async fn start(
+    pub fn new(
         state: Rc<RefCell<ThreadState>>,
-        receiver: RefCell<Receiver<Arc<MediaEntry>>>,
-        shotdown: MediaThreadPanic,
-    ) {
+        rx: RefCell<Receiver<Arc<MediaEntry>>>,
+    ) -> MediaThreadInt {
+        Self { state, rx }
+    }
+
+    pub async fn start(&mut self, shotdown: MediaThreadPanic) {
         // https://github.com/seanmonstar/reqwest/issues/734
 
         // let receiver = receiver;
         // let mut state = state.borrow_mut();
         // let client = reqwest::Client::new();
 
-        let mut receiver = receiver.borrow_mut();
+        // let mut receiver = self.rx.borrow_mut();
 
         let mut shotdown = shotdown;
 
@@ -252,12 +253,12 @@ impl MediaThreadInt {
                 break;
             }
 
-            let media = Self::get_next_media(&state);
+            let media = self.get_next_media();
 
             if let Some(med) = media {
-                process_media(&state, &med).await.unwrap();
+                process_media(&self.state, &med).await.unwrap();
             } else {
-                let res = Self::wait_notify_or_shoutwown(&mut receiver, &mut shotdown).await;
+                let res = self.wait_notify_or_shoutwown(&mut shotdown).await;
                 if res {
                     break;
                 }
