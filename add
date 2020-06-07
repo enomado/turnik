@@ -1,0 +1,5 @@
+#!/bin/bash
+
+echo $1
+
+curl -d '{"command":"add_thread", "params": {"url":"'$1'"}}' -H 'Content-Type: application/json'  http://localhost:3030/hello 

@@ -47,7 +47,8 @@ use crate::{
     db_async::{DbRequest, SqlThread, ThreadsFromStart},
     sql::{sql_thread_runner, DbState},
     state::DvachThreadUrl,
-    web::{web_backend, FromUi, ThreadPlanner, ThreadPlannerBuilder},
+    thread_planner::{ThreadPlanner, ThreadPlannerBuilder},
+    web::{web_backend, FromUi},
 };
 
 use toml;
@@ -57,6 +58,7 @@ mod media_downloader;
 mod sql;
 mod state;
 mod thread_downloader;
+mod thread_planner;
 mod web;
 
 pub struct Config {
