@@ -80,8 +80,8 @@ impl ThreadPlannerBuilder {
         let state = self.int_state;
 
         local_task_set.spawn_local(async move {
-            ThreadPlannerInt::new()
-                .start(state.state, state.rx, state.sql_thread, state.media_thread, shoutdown)
+            ThreadPlannerInt::new(state.sql_thread)
+                .start(state.state, state.rx, state.media_thread, shoutdown)
                 .await;
         });
 
@@ -107,14 +107,16 @@ impl ThreadPlanner {
     }
 }
 
-struct ThreadPlannerInt;
+struct ThreadPlannerInt {
+    sql: SqlThread,
+    rx: Receiver<FromUi>,
+}
 
 impl ThreadPlannerInt {
     async fn spawn_thread_loader(
         &self,
         state: &Rc<RefCell<ThreadState>>,
         url: &DvachThreadUrl,
-        db_tx: &SqlThread,
         media_thread: &Arc<MediaThread>,
     ) {
         let state = state.clone();
@@ -123,7 +125,7 @@ impl ThreadPlannerInt {
 
         println!("adding new thread from db");
 
-        let db_tx = db_tx.clone();
+        let db_tx = self.sql.clone();
 
         let media_thread = media_thread.clone();
 
@@ -133,67 +135,58 @@ impl ThreadPlannerInt {
     }
 
     async fn add_new_threads_on_start(
-        &self,
-        sql: &mut SqlThread,
+        &mut self,
         state: &Rc<RefCell<ThreadState>>,
         media_thread: &Arc<MediaThread>,
     ) {
-        let media = sql.get_threads(ThreadFilter::NotFinished).await;
+        let media = self.sql.get_threads(ThreadFilter::NotFinished).await;
 
         dbg!(&media);
 
         for url in media.threads.iter() {
-            self.spawn_thread_loader(&state, &url, &sql, &media_thread).await;
+            self.spawn_thread_loader(&state, &url, &media_thread).await;
         }
     }
 
-    pub fn new() -> Self {
-        ThreadPlannerInt
+    pub fn new(sql: SqlThread, rx: Receiver<FromUi>) -> Self {
+        ThreadPlannerInt { sql, rx }
     }
 
     async fn add_thread(
-        &self,
+        &mut self,
         state: &Rc<RefCell<ThreadState>>,
         url: &Url,
-        sql: &mut SqlThread,
         media_thread: &Arc<MediaThread>,
     ) {
         let d_url = DvachThreadUrl::parse(&url).unwrap();
-        let media = sql.get_threads(ThreadFilter::All).await;
+        let media = self.sql.get_threads(ThreadFilter::All).await;
 
         if media.threads.contains(&d_url) {
             println!("Already {}", &url);
         } else {
             println!("adding new thread {}", &d_url);
-            sql.new_thread(&d_url).await.unwrap();
-            self.spawn_thread_loader(&state, &d_url, &sql, &media_thread).await;
+            self.sql.new_thread(&d_url).await.unwrap();
+            self.spawn_thread_loader(&state, &d_url, &media_thread).await;
         }
     }
     pub async fn start(
-        &self,
+        &mut self,
         state: Rc<RefCell<ThreadState>>,
-        receiver: Receiver<FromUi>,
-        sql: SqlThread,
         media_thread: Arc<MediaThread>,
         _shutdown: ShutdownCall,
     ) {
         let state = state.clone();
 
-        let mut receiver = receiver;
-        let mut sql = sql;
-
         // panic!("responce from db");
         // let mut threads: Vec<ThreadHandle> = vec![];
 
-        self.add_new_threads_on_start(&mut sql, &state, &media_thread).await;
+        self.add_new_threads_on_start(&state, &media_thread).await;
 
         loop {
-            let media = receiver.recv().await.unwrap();
+            let media = self.rx.recv().await.unwrap();
 
             match media {
-                FromUi::AddThread(url) => {
-                    self.add_thread(&state, &url, &mut sql, &media_thread).await
-                }
+                FromUi::AddThread(url) => self.add_thread(&state, &url, &media_thread).await,
             }
         }
 
