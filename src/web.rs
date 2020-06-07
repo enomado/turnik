@@ -86,27 +86,6 @@ pub enum FromUi {
     // Ping,
 }
 
-async fn spawn_thread_loader(
-    state: &Rc<RefCell<ThreadState>>,
-    url: &DvachThreadUrl,
-    db_tx: &SqlThread,
-    media_thread: &Arc<MediaThread>,
-) {
-    let state = state.clone();
-
-    let url = url.clone();
-
-    println!("adding new thread from db");
-
-    let db_tx = db_tx.clone();
-
-    let media_thread = media_thread.clone();
-
-    task::spawn_local(async move {
-        thread_downloader(url, state, db_tx, media_thread).await;
-    });
-}
-
 // use tokio::task::LocalSet;
 
 struct ThreadPlannerTransferState {
@@ -144,14 +123,9 @@ impl ThreadPlannerBuilder {
         let state = self.int_state;
 
         local_task_set.spawn_local(async move {
-            thread_planner_thread(
-                state.state,
-                state.rx,
-                state.sql_thread,
-                state.media_thread,
-                shoutdown,
-            )
-            .await;
+            ThreadPlannerInt::new()
+                .start(state.state, state.rx, state.sql_thread, state.media_thread, shoutdown)
+                .await;
         });
 
         ThreadPlanner { tx: self.tx }
@@ -175,52 +149,90 @@ impl ThreadPlanner {
     }
 }
 
-pub async fn thread_planner_thread(
-    state: Rc<RefCell<ThreadState>>,
-    receiver: Receiver<FromUi>,
-    sql: SqlThread,
-    media_thread: Arc<MediaThread>,
-    _shutdown: ShutdownCall,
-) {
-    let state = state.clone();
+struct ThreadPlannerInt;
 
-    let mut receiver = receiver;
-    let mut sql = sql;
+impl ThreadPlannerInt {
+    async fn spawn_thread_loader(
+        &self,
+        state: &Rc<RefCell<ThreadState>>,
+        url: &DvachThreadUrl,
+        db_tx: &SqlThread,
+        media_thread: &Arc<MediaThread>,
+    ) {
+        let state = state.clone();
 
-    {
+        let url = url.clone();
+
+        println!("adding new thread from db");
+
+        let db_tx = db_tx.clone();
+
+        let media_thread = media_thread.clone();
+
+        task::spawn_local(async move {
+            thread_downloader(url, state, db_tx, media_thread).await;
+        });
+    }
+
+    async fn add_new_threads_on_start(
+        &self,
+        sql: &mut SqlThread,
+        state: &Rc<RefCell<ThreadState>>,
+        media_thread: &Arc<MediaThread>,
+    ) {
         let media = sql.get_threads(ThreadFilter::NotFinished).await;
 
         dbg!(&media);
 
         for url in media.threads.iter() {
-            spawn_thread_loader(&state, &url, &sql, &media_thread).await;
+            self.spawn_thread_loader(&state, &url, &sql, &media_thread).await;
         }
     }
 
-    // panic!("responce from db");
-    // let mut threads: Vec<ThreadHandle> = vec![];
+    pub fn new() -> Self {
+        ThreadPlannerInt
+    }
 
-    loop {
-        let media = receiver.recv().await.unwrap();
+    pub async fn start(
+        &self,
+        state: Rc<RefCell<ThreadState>>,
+        receiver: Receiver<FromUi>,
+        sql: SqlThread,
+        media_thread: Arc<MediaThread>,
+        _shutdown: ShutdownCall,
+    ) {
+        let state = state.clone();
 
-        match media {
-            FromUi::AddThread(url) => {
-                let d_url = DvachThreadUrl::parse(&url).unwrap();
-                let media = sql.get_threads(ThreadFilter::All).await;
+        let mut receiver = receiver;
+        let mut sql = sql;
 
-                if media.threads.contains(&d_url) {
-                    println!("Already {}", &url);
-                } else {
-                    println!("adding new thread {}", &d_url);
-                    sql.new_thread(&d_url).await.unwrap();
-                    spawn_thread_loader(&state, &d_url, &sql, &media_thread).await;
+        // panic!("responce from db");
+        // let mut threads: Vec<ThreadHandle> = vec![];
+
+        self.add_new_threads_on_start(&mut sql, &state, &media_thread).await;
+
+        loop {
+            let media = receiver.recv().await.unwrap();
+
+            match media {
+                FromUi::AddThread(url) => {
+                    let d_url = DvachThreadUrl::parse(&url).unwrap();
+                    let media = sql.get_threads(ThreadFilter::All).await;
+
+                    if media.threads.contains(&d_url) {
+                        println!("Already {}", &url);
+                    } else {
+                        println!("adding new thread {}", &d_url);
+                        sql.new_thread(&d_url).await.unwrap();
+                        self.spawn_thread_loader(&state, &d_url, &sql, &media_thread).await;
+                    }
                 }
             }
+
+            println!("new thread");
+
+            delay_for(Duration::new(5, 0)).await;
         }
-
-        println!("new thread");
-
-        delay_for(Duration::new(5, 0)).await;
     }
 }
 

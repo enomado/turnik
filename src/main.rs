@@ -47,7 +47,7 @@ use crate::{
     db_async::{DbRequest, SqlThread, ThreadsFromStart},
     sql::{sql_thread_runner, DbState},
     state::DvachThreadUrl,
-    web::{thread_planner_thread, web_backend, FromUi, ThreadPlanner, ThreadPlannerBuilder},
+    web::{web_backend, FromUi, ThreadPlanner, ThreadPlannerBuilder},
 };
 
 use toml;
