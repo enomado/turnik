@@ -110,6 +110,7 @@ enum RespType {
     Ok(RespOk),
     NotFound,
     NotModified,
+    BadGateway,
 }
 
 struct ThreadResult {
@@ -156,6 +157,16 @@ async fn download_thread_and_get_urls(client_wrap: &ClientWrap, url: &str) -> Re
         });
     };
 
+    if status == StatusCode::BAD_GATEWAY {
+        println!("bad gateway {}", &url);
+        return Ok(ThreadResult {
+            resp: RespType::BadGateway,
+            is_archived: false,
+            last_modified: client_wrap.last_modifed.clone(),
+        });
+    };
+
+    // TODO: hangle 502 with no attempt increment
     assert!(resp.status().is_success());
 
     let last_modified: Option<String> = resp
@@ -442,20 +453,23 @@ pub async fn thread_downloader(
 
         dbg!("is_archived: {}", is_archived);
 
-        if let RespType::Ok(resp) = res.resp {
-            plan_media(&sstate, &resp.media_urls, &thread_url_raw, &media_thread, &mut sql)
-                .await
-                .unwrap();
+        match res.resp {
+            RespType::Ok(resp) => {
+                plan_media(&sstate, &resp.media_urls, &thread_url_raw, &media_thread, &mut sql)
+                    .await
+                    .unwrap();
 
-            save_index(&download_dir, &resp.page_body).await.unwrap();
+                save_index(&download_dir, &resp.page_body).await.unwrap();
 
-            if !is_archived {
-                save_json(&download_dir, &client, &thread_url_raw).await.unwrap();
+                if !is_archived {
+                    save_json(&download_dir, &client, &thread_url_raw).await.unwrap();
+                }
+
+                not_found_attempts = 0;
             }
-
-            not_found_attempts = 0;
-        } else if let RespType::NotFound = res.resp {
-            not_found_attempts += 1
+            RespType::NotFound => not_found_attempts += 1,
+            RespType::BadGateway => not_found_attempts += 1,
+            RespType::NotModified => not_found_attempts = 0,
         }
 
         if is_archived {
