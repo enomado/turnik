@@ -50,14 +50,22 @@ fn update_media(state: &RefCell<ThreadState>, media: &MediaEntry) {
     state.medias.replace(Arc::new(new_media));
 }
 
-async fn copy_file(response: &mut Response, dest: &mut File) {
+async fn copy_file(response: &mut Response, dest: &mut File) -> Result<()> {
     // https://github.com/seanmonstar/reqwest/issues/482
     // let u = response.bytes_stream()
     // may be use use tokio_util::compat::FuturesAsyncReadCompatExt; ?
 
-    while let Some(chunk) = response.chunk().await.unwrap() {
-        dest.write(&chunk).await.unwrap();
+    loop {
+        let res = response.chunk().await?;
+        match res {
+            Some(chunk) => {
+                dest.write(&chunk).await?;
+                ()
+            }
+            None => break,
+        }
     }
+    Ok(())
 }
 
 async fn file_exists(path: &PathBuf) -> bool {
@@ -110,7 +118,7 @@ async fn process_media(sstate: &RefCell<ThreadState>, media: &MediaEntry) -> Res
     // File::create(&abs_filename.to_str().unwrap().to_string()).unwrap();
     let mut dest: File = File::create(&abs_filename_tmp).await?;
 
-    copy_file(&mut response, &mut dest).await;
+    copy_file(&mut response, &mut dest).await?;
     dest.flush().await?;
 
     rename(&abs_filename_tmp, &abs_filename).await?;
