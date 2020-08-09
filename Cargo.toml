@@ -23,16 +23,16 @@ rusqlite = "*"
 http = "*"
 toml = "*"
 anyhow = {version="*", features=["std"]}
-cloudflare-bypasser="*"
-scraper="*"
-kuchiki="*"
+# cloudflare-bypasser="*"
+# scraper="*"
+# kuchiki="*"
 select="*"
 html5ever="*"
 bincode = "*"
 warp = "*"
 hyper = "*"
 
-[dependencies.rocket_contrib]
-version = "*"
-default-features = false
-features = ["json"]
+#[dependencies.rocket_contrib]
+#version = "*"
+#default-features = false
+#features = ["json"]
