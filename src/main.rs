@@ -191,6 +191,8 @@ impl ShutdownCall {
 
 #[tokio::main]
 async fn main() {
+    better_panic::install();
+
     let config = get_config().unwrap();
 
     let state = ThreadState::new(&config.download_path);

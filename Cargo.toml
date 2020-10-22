@@ -31,6 +31,10 @@ html5ever="*"
 bincode = "*"
 warp = "*"
 hyper = "*"
+better-panic="*"
+
+[profile.release]
+debug = true
 
 #[dependencies.rocket_contrib]
 #version = "*"
